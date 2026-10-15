@@ -1,306 +1,421 @@
-// 1. STATE MANAGEMENT
-let listings = JSON.parse(localStorage.getItem('iips_listings')) || [];
+// ---------- 1. CONFIG ----------
+const CONFIG = {
+  STORAGE_KEY: 'iips_listings',
+  MANAGER_PASSCODE: 'iips@2026',   // change this. Convenience lock only, not real security
+  MAX_IMAGES: 5,
+};
+const MGR_KEY = 'iips_manager';
 
-// 2. DOM ELEMENTS (Safely matched to your exact HTML)
-const modal = document.getElementById('listingModal');
-const openBtn = document.getElementById('openFormBtn');
-const closeBtn = document.getElementById('closeModalBtn');
-const cancelBtn = document.getElementById('cancelFormBtn');
-const listingForm = document.getElementById('listingForm');
+// ---------- 2. STATE ----------
+let listings = [];
+try { listings = JSON.parse(localStorage.getItem(CONFIG.STORAGE_KEY)) || []; } catch (e) { listings = []; }
+let currentId = null;
+let productFiles = [];
+let animateTiles = true;
 
-const marketplaceSection = document.getElementById('marketplaceSection');
-const managerSection = document.getElementById('managerSection');
-const viewManagerBtn = document.getElementById('viewManagerBtn');
+// ---------- 3. HELPERS ----------
+const $ = (id) => document.getElementById(id);
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const money = (n) => Number(n).toLocaleString('en-IN');
+const hashPin = (p) => { let h = 5381; for (const ch of 'iips' + p) h = ((h << 5) + h + ch.charCodeAt(0)) >>> 0; return String(h); };
 
-const listingsContainer = document.getElementById('listingsContainer');
-const pendingListingsContainer = document.getElementById('pendingListingsContainer');
-const pendingCount = document.getElementById('pendingCount');
-const searchInput = document.getElementById('searchInput');
-if (searchInput) {
-  searchInput.addEventListener('input', () => {
-    renderListings(); // Re-render feed dynamically as user types
-  });
+function timeAgo(ts) {
+  const m = Math.floor((Date.now() - ts) / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return m + ' min ago';
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + ' hr ago';
+  const d = Math.floor(h / 24);
+  return d + (d === 1 ? ' day ago' : ' days ago');
 }
 
-// Helper to convert files into Base64 strings
-const readFileAsDataURL = (file) => {
+// DOM references
+const listingModal = $('listingModal'), detailModal = $('adDetailModal'), askModal = $('askModal');
+const marketplaceSection = $('marketplaceSection'), managerSection = $('managerSection');
+const viewManagerBtn = $('viewManagerBtn');
+const listingsContainer = $('listingsContainer');
+const pendingContainer = $('pendingListingsContainer');
+const liveManagerContainer = $('liveManagerContainer');
+const searchInput = $('searchInput'), conditionFilter = $('conditionFilter'), sortSelect = $('sortSelect');
+
+// ---------- 4. DIALOGS ----------
+const openDlg = (d) => { d.classList.remove('closing'); d.showModal(); };
+function closeDlg(d) {
+  if (!d.open || d.classList.contains('closing')) return;
+  d.classList.add('closing');
+  d.addEventListener('animationend', () => { d.close(); d.classList.remove('closing'); }, { once: true });
+}
+
+let askResolve = null;
+function ask({ title, text = '', input = false, numeric = false, ok = 'Confirm', danger = false }) {
+  return new Promise(resolve => {
+    askResolve = resolve;
+    $('askTitle').textContent = title;
+    $('askText').textContent = text;
+    const f = $('askInput');
+    f.hidden = !input; f.required = input; f.value = '';
+    f.inputMode = numeric ? 'numeric' : 'text';
+    $('askOk').textContent = ok;
+    $('askOk').className = danger ? 'btn-reject' : 'btn-submit';
+    openDlg(askModal);
+    if (input) setTimeout(() => f.focus(), 60);
+  });
+}
+function askDone(v) {
+  if (askResolve) { askResolve(v); askResolve = null; }
+  closeDlg(askModal);
+}
+$('askForm').addEventListener('submit', (e) => { e.preventDefault(); askDone($('askInput').hidden ? true : $('askInput').value.trim()); });
+$('askCancel').addEventListener('click', () => askDone(null));
+
+function dismiss(d) { d === askModal ? askDone(null) : closeDlg(d); }
+[listingModal, detailModal, askModal].forEach(d => {
+  d.addEventListener('cancel', (e) => { e.preventDefault(); dismiss(d); });             // Esc key
+  d.addEventListener('click', (e) => { if (e.target === d) dismiss(d); });              // backdrop click
+});
+$('closeModalBtn').addEventListener('click', () => closeDlg(listingModal));
+$('cancelFormBtn').addEventListener('click', () => closeDlg(listingModal));
+$('closeDetailBtn').addEventListener('click', () => closeDlg(detailModal));
+$('openFormBtn').addEventListener('click', () => openDlg(listingModal));
+$('heroSellBtn').addEventListener('click', () => openDlg(listingModal));
+
+// ---------- 5. TOASTS ----------
+function toast(msg, type = 'success') {
+  const t = document.createElement('div');
+  t.className = 'toast ' + type;
+  t.innerHTML = `<span class="ti">${type === 'error' ? '!' : '✓'}</span><span>${esc(msg)}</span>`;
+  $('toastContainer').appendChild(t);
+  setTimeout(() => { t.classList.add('out'); t.addEventListener('animationend', () => t.remove(), { once: true }); }, 3200);
+}
+
+// ---------- 6. IMAGES ----------
+// Shrinks an image and returns a small JPEG (keeps localStorage from filling up)
+function readImage(file, maxSize = 700) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = (e) => resolve(e.target.result);
-    reader.onerror = (e) => reject(e);
+    reader.onerror = reject;
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = reject;
+      img.onload = () => {
+        const scale = Math.min(1, maxSize / Math.max(img.width, img.height));
+        const c = document.createElement('canvas');
+        c.width = Math.round(img.width * scale);
+        c.height = Math.round(img.height * scale);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        resolve(c.toDataURL('image/jpeg', 0.75));
+      };
+      img.src = reader.result;
+    };
     reader.readAsDataURL(file);
   });
-};
-
-// 3. MODAL CONTROLS
-if (openBtn && modal) openBtn.addEventListener('click', () => modal.showModal());
-if (closeBtn && modal) closeBtn.addEventListener('click', () => modal.close());
-if (cancelBtn && modal) cancelBtn.addEventListener('click', () => modal.close());
-
-// Backdrop click close handling
-if (modal) {
-  modal.addEventListener('click', (e) => {
-    const dialogDimensions = modal.getBoundingClientRect();
-    if (
-      e.clientX < dialogDimensions.left ||
-      e.clientX > dialogDimensions.right ||
-      e.clientY < dialogDimensions.top ||
-      e.clientY > dialogDimensions.bottom
-    ) {
-      modal.close();
-    }
-  });
 }
 
-// 4. NAVIGATION TOGGLE (Manager Dashboard vs Live Feed)
-if (viewManagerBtn) {
-  viewManagerBtn.addEventListener('click', () => {
-    if (managerSection.hasAttribute('hidden')) {
-      managerSection.removeAttribute('hidden');
-      marketplaceSection.setAttribute('hidden', 'true');
-      viewManagerBtn.textContent = '← Back to Marketplace';
-    } else {
-      managerSection.setAttribute('hidden', 'true');
-      marketplaceSection.removeAttribute('hidden');
-      renderListings(); // Refresh feed when returning
-    }
-  });
+// ---------- 7. FORM ----------
+function renderPreview() {
+  $('imagePreviewContainer').innerHTML = productFiles.map((f, i) =>
+    `<div class="pv"><img src="${URL.createObjectURL(f)}" alt="Selected photo ${i + 1}">
+     <button type="button" data-i="${i}" aria-label="Remove photo ${i + 1}">&times;</button></div>`).join('');
 }
+$('productPhotos').addEventListener('change', (e) => {
+  const room = CONFIG.MAX_IMAGES - productFiles.length;
+  const picked = Array.from(e.target.files);
+  if (picked.length > room) toast(`You can add up to ${CONFIG.MAX_IMAGES} photos`, 'error');
+  productFiles.push(...picked.slice(0, room));
+  e.target.value = '';
+  renderPreview();
+});
+$('imagePreviewContainer').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-i]');
+  if (b) { productFiles.splice(Number(b.dataset.i), 1); renderPreview(); }
+});
 
-// 5. FORM SUBMISSION WITH FILE READERS
-if (listingForm) {
-  listingForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-
-    try {
-      // Product Images Input
-      const productFiles = document.getElementById('productPhotos').files;
-      if (!productFiles || productFiles.length === 0) {
-        alert('Please select at least one product image.');
-        return;
-      }
-
-      // Seller Face Image Input
-      const sellerFiles = document.getElementById('sellerphotos').files;
-      let sellerPhotoBase64 = 'https://via.placeholder.com/150'; // fallback placeholder
-      if (sellerFiles && sellerFiles.length > 0) {
-        sellerPhotoBase64 = await readFileAsDataURL(sellerFiles[0]);
-      }
-
-      // Convert all product images to Base64 array
-      const productImagesArray = await Promise.all(
-        Array.from(productFiles).map(file => readFileAsDataURL(file))
-      );
-
-      // Create new listing object
-      const newListing = {
-        id: Date.now(),
-        sellerName: document.getElementById('sellerName').value,
-        sellerPhoto: sellerPhotoBase64,
-        phone: document.getElementById('phone').value,
-        whatsapp: document.getElementById('whatsapp').value,
-        title: document.getElementById('title').value,
-        price: document.getElementById('price').value,
-        productPhotos: productImagesArray,
-        usage: document.getElementById('usage').value,
-        warranty: document.getElementById('warranty').value,
-        description: document.getElementById('description').value,
-        status: 'pending' // Enters review queue
-      };
-
-      listings.push(newListing);
-      saveAndRefresh();
-
-      listingForm.reset();
-      modal.close();
-      alert('Listing submitted successfully! Pending manager approval.');
-
-    } catch (err) {
-      console.error("Submission error:", err);
-      alert("⚠️ File processing error: " + err.message);
-    }
-  });
-}
-const productPhotosInput = document.getElementById('productPhotos');
-const previewContainer = document.getElementById('imagePreviewContainer');
-
-if (productPhotosInput && previewContainer) {
-  productPhotosInput.addEventListener('change', (e) => {
-    previewContainer.innerHTML = ''; // Clear old previews
-    const files = e.target.files;
-
-    Array.from(files).forEach(file => {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const thumb = document.createElement('img');
-        thumb.src = event.target.result;
-        thumb.style.width = '60px';
-        thumb.style.height = '60px';
-        thumb.style.objectFit = 'cover';
-        thumb.style.borderRadius = '4px';
-        thumb.style.border = '1px solid #ccc';
-        previewContainer.appendChild(thumb);
-      };
-      reader.readAsDataURL(file);
-    });
-  });
-}
-window.openImageModal = function(imgSrc) {
-  const modal = document.getElementById('imagePreviewModal');
-  const fullImg = document.getElementById('fullImagePreview');
-  if (modal && fullImg) {
-    fullImg.src = imgSrc;
-    modal.showModal();
-  }
-};
-// 6. LOCAL STORAGE SAVE & RENDER TRIGGER
-function saveAndRefresh() {
+$('listingForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!productFiles.length) return toast('Add at least one product photo', 'error');
+  const btn = $('submitBtn');
+  btn.disabled = true; btn.textContent = 'Submitting…';
   try {
-    localStorage.setItem('iips_listings', JSON.stringify(listings));
-    renderListings();
-  } catch (err) {
-    console.error("Storage error:", err);
-    alert("⚠️ Images selected are too large for browser memory. Try choosing smaller or fewer images.");
-  }
-}
-
-// 7. APPROVE / REJECT ACTIONS
-window.updateStatus = function(id, newStatus) {
-  listings = listings.map(item => {
-    if (item.id === id) item.status = newStatus;
-    return item;
-  });
-  saveAndRefresh();
-};
-
-window.deleteListing = function(id) {
-  listings = listings.filter(item => item.id !== id);
-  saveAndRefresh();
-};
-
-
-
- // 8. RENDER LISTINGS TO UI
-function renderListings() {
-  const pendingItems = listings.filter(item => item.status === 'pending');
-  const approvedItems = listings.filter(item => item.status === 'approved');
-
-  // Update Pending Count Badge
-  if (pendingCount) pendingCount.textContent = pendingItems.length;
-
-  // Render Approved Feed
-// Render Approved Feed
-  if (listingsContainer) {
-    // Grab the current search query text (lowercase for case-insensitive matching)
-    const searchQuery = searchInput ? searchInput.value.toLowerCase().trim() : '';
-
-    // Filter approved items based on title or description match
-    const filteredApprovedItems = approvedItems.filter(item => {
-      const titleMatch = item.title.toLowerCase().includes(searchQuery);
-      const descMatch = item.description.toLowerCase().includes(searchQuery);
-      return titleMatch || descMatch;
+    const [sellerPhoto, productPhotos] = await Promise.all([
+      readImage($('sellerphotos').files[0], 150),
+      Promise.all(productFiles.map(f => readImage(f)))
+    ]);
+    listings.push({
+      id: Date.now(),
+      sellerName: $('sellerName').value.trim(),
+      sellerPhoto,
+      phone: $('phone').value.trim(),
+      whatsapp: $('whatsapp').value.trim(),
+      title: $('title').value.trim(),
+      price: $('price').value,
+      productPhotos,
+      usage: $('usage').value,
+      warranty: $('warranty').value.trim(),
+      description: $('description').value.trim(),
+      pinHash: hashPin($('deletePin').value),
+      status: 'pending'
     });
-
-    if (filteredApprovedItems.length === 0) {
-      listingsContainer.innerHTML = '<p style="color: #666; text-align: center; padding: 20px;">No matching listings found.</p>';
-    } else {
-      listingsContainer.innerHTML = filteredApprovedItems.map(item => `
-        <div class="ad-card" data-id="${item.id}" style="border:1px solid #e0e0e0; padding:15px; margin-bottom:15px; border-radius:8px; display:flex; gap:15px; background:#fff; cursor:pointer; transition: transform 0.2s, box-shadow 0.2s;" onmouseover="this.style.boxShadow='0 4px 12px rgba(0,0,0,0.1)'" onmouseout="this.style.boxShadow='none'">
-          <img src="${item.productPhotos[0]}" alt="${item.title}" style="width:130px; height:130px; object-fit:cover; border-radius:6px;">
-          <div style="flex:1;">
-            <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px; color:#555;">
-              <img src="${item.sellerPhoto}" style="width:26px; height:26px; border-radius:50%; object-fit:cover;">
-              <span style="font-size:0.9rem;">${item.sellerName}</span>
-            </div>
-            <h3 style="margin:0 0 5px 0; color:#222;">${item.title}</h3>
-            <p style="color:#28a745; font-weight:bold; font-size:1.15rem; margin:0 0 6px 0;">₹${item.price}</p>
-            <p style="margin:0 0 8px 0; font-size:0.85rem; color:#666;"><strong>Condition:</strong> ${item.usage}</p>
-            <span style="background:#eef2f7; color:#0066cc; padding:4px 8px; border-radius:4px; font-size:0.8rem; font-weight:600;">View Details →</span>
-          </div>
-        </div>
-      `).join('');
-    }
+    if (!save()) { listings.pop(); return; }
+    $('listingForm').reset();
+    productFiles = []; renderPreview();
+    closeDlg(listingModal);
+    toast('Listing submitted. It goes live after manager approval.');
+  } catch (err) {
+    console.error(err);
+    toast('Could not process the images. Try different files.', 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Submit for Approval';
   }
+});
 
-  // Render Manager Queue
-  if (pendingListingsContainer) {
-    if (pendingItems.length === 0) {
-      pendingListingsContainer.innerHTML = '<p>No pending approvals in queue.</p>';
-    } else {
-      pendingListingsContainer.innerHTML = pendingItems.map(item => `
-        <div class="card" style="border-left:5px solid orange; border:1px solid #ccc; padding:15px; margin-bottom:15px; border-radius:8px; display:flex; gap:15px; background:#fff;">
-          <img src="${item.productPhotos[0]}" alt="${item.title}" style="width:120px; height:120px; object-fit:cover; border-radius:6px;">
-          <div style="flex:1;">
-            <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px; color:#555;">
-              <img src="${item.sellerPhoto}" style="width:28px; height:28px; border-radius:50%; object-fit:cover;">
-              <span>Seller: <strong>${item.sellerName}</strong> (Ph: ${item.phone})</span>
-            </div>
-            <h3 style="margin:0 0 5px 0;">${item.title} - ₹${item.price}</h3>
-            <p style="margin:0 0 5px 0;"><strong>Condition:</strong> ${item.usage} | <strong>Warranty:</strong> ${item.warranty}</p>
-            <p style="margin:0 0 10px 0; color:#444;">${item.description}</p>
-            <div>
-              <button onclick="updateStatus(${item.id}, 'approved')" style="background:#28a745; color:white; border:none; padding:6px 12px; border-radius:4px; cursor:pointer; margin-right:8px;">✅ Approve Listing</button>
-              <button onclick="deleteListing(${item.id})" style="background:#dc3545; color:white; border:none; padding:6px 12px; border-radius:4px; cursor:pointer;">❌ Reject / Delete</button>
-            </div>
-          </div>
-        </div>
-      `).join('');
-    }
+// ---------- 8. ACTIONS ----------
+function save() {
+  try {
+    localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(listings));
+    render();
+    return true;
+  } catch (err) {
+    toast('Storage is full. Try fewer or smaller images.', 'error');
+    return false;
   }
 }
 
-// Global Event Listener for clicking ad cards securely
-if (listingsContainer) {
-  listingsContainer.addEventListener('click', (e) => {
-    const card = e.target.closest('.ad-card');
-    if (card) {
-      const id = Number(card.getAttribute('data-id'));
-      openAdDetails(id);
-    }
-  });
+async function leave(id) {
+  const el = document.querySelector(`[data-card="${id}"]`);
+  if (el) { el.classList.add('leaving'); await sleep(320); }
 }
-// 9. OPEN AD DETAILS MODAL
-window.openAdDetails = function(id) {
+
+async function approve(id) {
+  await leave(id);
   const item = listings.find(l => l.id === id);
-  if (!item) {
-    console.error("Listing not found for ID:", id);
-    return;
+  if (item) item.status = 'approved';
+  save();
+  toast('Listing approved and now live');
+}
+
+async function remove(id) {
+  const ok = await ask({ title: 'Delete this listing?', text: 'This cannot be undone.', ok: 'Delete', danger: true });
+  if (!ok) return;
+  await leave(id);
+  listings = listings.filter(l => l.id !== id);
+  save();
+  toast('Listing deleted');
+}
+
+pendingContainer.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-action]');
+  if (!btn) return;
+  const id = Number(btn.dataset.id);
+  btn.dataset.action === 'approve' ? approve(id) : remove(id);
+});
+liveManagerContainer.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-id]');
+  if (btn) remove(Number(btn.dataset.id));
+});
+
+// Seller removes own listing using the PIN
+$('removeListingBtn').addEventListener('click', async () => {
+  const l = listings.find(x => x.id === currentId);
+  if (!l) return;
+  const pin = await ask({ title: 'Remove your listing', text: 'Enter your 4-digit delete PIN.', input: true, numeric: true, ok: 'Remove' });
+  if (pin === null) return;
+  if (!l.pinHash || hashPin(pin) !== l.pinHash) {
+    return toast('Wrong PIN. If you forgot it, contact the manager.', 'error');
   }
+  closeDlg(detailModal);
+  listings = listings.filter(x => x.id !== currentId);
+  save();
+  toast('Your listing has been removed');
+});
 
-  // Populate text fields safely
-  document.getElementById('detailTitle').textContent = item.title;
-  document.getElementById('detailPrice').textContent = '₹' + item.price;
-  document.getElementById('detailUsage').textContent = item.usage;
-  document.getElementById('detailWarranty').textContent = item.warranty;
-  document.getElementById('detailDescription').textContent = item.description;
-  document.getElementById('detailSellerName').textContent = item.sellerName;
-  document.getElementById('detailSellerPhoto').src = item.sellerPhoto;
+// ---------- 9. RENDER ----------
+function countTo(el, to) {
+  const from = Number(el.dataset.v || 0);
+  el.dataset.v = to;
+  const t0 = performance.now();
+  const step = (t) => {
+    const p = Math.min(1, (t - t0) / 900);
+    el.textContent = money(Math.round(from + (to - from) * (1 - Math.pow(1 - p, 3))));
+    if (p < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
 
-  // Set contact links
-  document.getElementById('detailCallBtn').href = `tel:${item.phone}`;
-  document.getElementById('detailWhatsappBtn').href = `https://wa.me/${item.whatsapp}?text=Hi%20${encodeURIComponent(item.sellerName)}%2C%20I%20saw%20your%20ad%20for%20${encodeURIComponent(item.title)}%20on%20IIPS%20Marketplace.`;
+function render() {
+  const pending = listings.filter(l => l.status === 'pending');
+  const approved = listings.filter(l => l.status === 'approved');
+  const inManager = !managerSection.hidden;
 
-  // Set initial main image
-  const mainImg = document.getElementById('detailMainImage');
-  if (mainImg && item.productPhotos && item.productPhotos.length > 0) {
-    mainImg.src = item.productPhotos[0];
+  // Header button
+  viewManagerBtn.innerHTML = inManager
+    ? '← Back to Marketplace'
+    : `Manager Dashboard <span class="badge ${pending.length ? 'pulse' : ''}" id="pendingCount">${pending.length}</span>`;
+
+  // Hero stats
+  const sellers = new Set(approved.map(l => l.phone)).size;
+  const avg = approved.length ? Math.round(approved.reduce((s, l) => s + Number(l.price), 0) / approved.length) : 0;
+  countTo($('statLive'), approved.length);
+  countTo($('statSellers'), sellers);
+  countTo($('statAvg'), avg);
+
+  // Live feed with search, filter, sort
+  const q = searchInput.value.toLowerCase().trim();
+  const cond = conditionFilter.value;
+  const shown = approved
+    .filter(l => (!cond || l.usage === cond) &&
+      (l.title + ' ' + l.description + ' ' + l.usage + ' ' + l.sellerName).toLowerCase().includes(q))
+    .sort((a, b) => sortSelect.value === 'low' ? a.price - b.price : sortSelect.value === 'high' ? b.price - a.price : b.id - a.id);
+
+  $('resultCount').textContent = approved.length ? `${shown.length} of ${approved.length} listings` : '';
+  listingsContainer.innerHTML = shown.length === 0
+    ? `<div class="empty"><div class="empty-ico">🔎</div>
+       <p>${approved.length ? 'No listings match your search. Try a different word or clear the filters.' : 'No listings yet. Be the first to post something.'}</p></div>`
+    : shown.map((l, i) => `
+      <article class="tile ${animateTiles ? 'enter' : ''}" style="--i:${Math.min(i, 12)}" data-id="${l.id}" data-card="${l.id}" tabindex="0" aria-label="${esc(l.title)}, ₹${esc(l.price)}">
+        <div class="cover-wrap">
+          <img class="cover" src="${l.productPhotos[0]}" alt="${esc(l.title)}" loading="lazy">
+          <span class="price-tag">₹${money(l.price)}</span>
+          ${l.productPhotos.length > 1 ? `<span class="count-tag">${l.productPhotos.length} photos</span>` : ''}
+        </div>
+        <div class="tile-body">
+          <h3>${esc(l.title)}</h3>
+          <p class="cond">${esc(l.usage)}</p>
+          <div class="seller"><img src="${l.sellerPhoto}" alt=""><span>${esc(l.sellerName)}</span><time>${timeAgo(l.id)}</time></div>
+        </div>
+      </article>`).join('');
+  animateTiles = false;
+
+  // Manager: live listings
+  liveManagerContainer.innerHTML = approved.length === 0
+    ? '<p class="muted">No live listings.</p>'
+    : approved.map(l => `
+      <div class="card live" data-card="${l.id}">
+        <img class="cover" src="${l.productPhotos[0]}" alt="${esc(l.title)}">
+        <div class="info">
+          <h3>${esc(l.title)} · ₹${money(l.price)}</h3>
+          <p class="muted">Seller: ${esc(l.sellerName)} (Ph: ${esc(l.phone)})</p>
+          <button class="btn-reject" data-id="${l.id}">🗑️ Delete</button>
+        </div>
+      </div>`).join('');
+
+  // Manager: approval queue
+  pendingContainer.innerHTML = pending.length === 0
+    ? '<p class="muted">No pending approvals. You are all caught up.</p>'
+    : pending.map(l => `
+      <div class="card" data-card="${l.id}">
+        <img class="cover" src="${l.productPhotos[0]}" alt="${esc(l.title)}">
+        <div class="info">
+          <div class="seller"><img src="${l.sellerPhoto}" alt=""><span>Seller: <strong>${esc(l.sellerName)}</strong> (Ph: ${esc(l.phone)})</span></div>
+          <h3>${esc(l.title)} · ₹${money(l.price)}</h3>
+          <p><strong>Condition:</strong> ${esc(l.usage)} | <strong>Warranty:</strong> ${esc(l.warranty)}</p>
+          <p class="muted">${esc(l.description)}</p>
+          <button class="btn-approve" data-action="approve" data-id="${l.id}">✅ Approve</button>
+          <button class="btn-reject" data-action="reject" data-id="${l.id}">❌ Reject</button>
+        </div>
+      </div>`).join('');
+}
+
+[searchInput, conditionFilter, sortSelect].forEach(el => el.addEventListener('input', render));
+
+// ---------- 10. DETAILS ----------
+function openDetails(id) {
+  const l = listings.find(x => x.id === id);
+  if (!l) return;
+  currentId = id;
+
+  $('detailTitle').textContent = l.title;
+  $('detailPrice').textContent = '₹' + money(l.price);
+  $('detailUsage').textContent = l.usage;
+  $('detailWarranty').textContent = l.warranty;
+  $('detailDescription').textContent = l.description;
+  $('detailSellerName').textContent = l.sellerName;
+  $('detailTime').textContent = '· ' + timeAgo(l.id);
+  $('detailSellerPhoto').src = l.sellerPhoto;
+
+  let wa = l.whatsapp.replace(/\D/g, '');
+  if (wa.length === 10) wa = '91' + wa;                       // assume India if no country code
+  const msg = encodeURIComponent(`Hi ${l.sellerName}, I saw your ad for ${l.title} on IIPS Marketplace.`);
+  $('detailCallBtn').href = 'tel:' + l.phone.replace(/\s/g, '');
+  $('detailWhatsappBtn').href = `https://wa.me/${wa}?text=${msg}`;
+
+  const main = $('detailMainImage'), thumbs = $('detailThumbnailsContainer');
+  const show = (src) => { main.src = src; main.classList.remove('swap'); void main.offsetWidth; main.classList.add('swap'); };
+  show(l.productPhotos[0]);
+  thumbs.innerHTML = '';
+  l.productPhotos.forEach((src, i) => {
+    const t = document.createElement('img');
+    t.src = src; t.alt = `Photo ${i + 1}`;
+    t.className = i === 0 ? 'active' : '';
+    t.addEventListener('click', () => {
+      show(src);
+      thumbs.querySelectorAll('img').forEach(x => x.classList.remove('active'));
+      t.classList.add('active');
+    });
+    thumbs.appendChild(t);
+  });
+  openDlg(detailModal);
+}
+listingsContainer.addEventListener('click', (e) => {
+  const tile = e.target.closest('.tile');
+  if (tile) openDetails(Number(tile.dataset.id));
+});
+listingsContainer.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { const tile = e.target.closest('.tile'); if (tile) openDetails(Number(tile.dataset.id)); }
+});
+
+// ---------- 11. VIEWS ----------
+function showView(view) {
+  const manager = view === 'manager';
+  managerSection.hidden = !manager;
+  marketplaceSection.hidden = manager;
+  const el = manager ? managerSection : marketplaceSection;
+  el.classList.remove('view-in'); void el.offsetWidth; el.classList.add('view-in');
+  animateTiles = !manager;
+  render();
+  window.scrollTo({ top: 0 });
+}
+
+viewManagerBtn.addEventListener('click', async () => {
+  if (!managerSection.hidden) return showView('market');
+  if (!sessionStorage.getItem(MGR_KEY)) {
+    const code = await ask({ title: 'Manager access', text: 'Enter the manager passcode.', input: true, ok: 'Unlock' });
+    if (code === null) return;
+    if (code !== CONFIG.MANAGER_PASSCODE) return toast('Wrong passcode', 'error');
+    sessionStorage.setItem(MGR_KEY, '1');
   }
+  showView('manager');
+});
 
-  // Populate thumbnail gallery switcher
-  const thumbsContainer = document.getElementById('detailThumbnailsContainer');
-  if (thumbsContainer && item.productPhotos) {
-    thumbsContainer.innerHTML = item.productPhotos.map((photo, index) => `
-      <img src="${photo}" onclick="document.getElementById('detailMainImage').src='${photo}'" style="width: 50px; height: 50px; object-fit: cover; border-radius: 4px; cursor: pointer; border: 2px solid ${index === 0 ? '#007bff' : 'transparent'};">
-    `).join('');
-  }
+// Nav links return to the marketplace if the manager view is open
+document.querySelectorAll('.menu a, .logo').forEach(a =>
+  a.addEventListener('click', () => { if (!managerSection.hidden) showView('market'); }));
 
-  // Show the modal
-  const modal = document.getElementById('adDetailModal');
-  if (modal) {
-    modal.showModal();
-  } else {
-    console.error("Modal element #adDetailModal missing from index.html!");
-  }
-};
-// Initial render on page load
-renderListings();
+// ---------- 12. PAGE EFFECTS ----------
+// Hero headline: split into words for the entrance animation
+document.querySelectorAll('[data-split]').forEach(h => {
+  h.innerHTML = h.textContent.trim().split(/\s+/)
+    .map((w, i) => `<span class="w" style="--d:${i * 60}ms">${esc(w)}</span>`).join(' ');
+});
+
+// Header shadow after scrolling
+const topbar = $('topbar');
+addEventListener('scroll', () => topbar.classList.toggle('scrolled', scrollY > 10), { passive: true });
+
+// Highlight the nav link of the section in view
+const spy = new IntersectionObserver((entries) => {
+  entries.forEach(en => {
+    if (en.isIntersecting) document.querySelectorAll('.menu a').forEach(a =>
+      a.classList.toggle('active', a.dataset.spy === en.target.id));
+  });
+}, { rootMargin: '-40% 0px -55% 0px' });
+['home', 'listings', 'about-us'].forEach(id => spy.observe($(id)));
+
+// Reveal the "how it works" steps once as they scroll into view
+const reveal = new IntersectionObserver((entries) => {
+  entries.forEach(en => { if (en.isIntersecting) { en.target.classList.add('in'); reveal.unobserve(en.target); } });
+}, { threshold: 0.3 });
+document.querySelectorAll('.reveal').forEach((el, i) => { el.style.setProperty('--d', i * 120 + 'ms'); reveal.observe(el); });
+
+// ---------- 13. INIT ----------
+render();

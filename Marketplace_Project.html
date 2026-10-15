@@ -4,169 +4,233 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>IIPS Marketplace</title>
-  <style>
-    /* Clean foundational styles for readability */
-    body { font-family: Arial, sans-serif; margin: 0; padding: 0; background: #f4f6f8; color: #333; }
-    header { background: #fff; padding: 15px 30px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #ddd; }
-    nav button { background: #007bff; color: white; border: none; padding: 8px 14px; border-radius: 6px; cursor: pointer; margin-left: 8px; font-weight: 600; }
-    nav button:hover { opacity: 0.9; }
-    main { max-width: 900px; margin: 30px auto; padding: 0 15px; }
-    fieldset { border: 1px solid #ccc; border-radius: 8px; padding: 15px; margin-bottom: 15px; background: #fff; }
-    legend { font-weight: bold; color: #007bff; }
-    label { display: block; margin-top: 10px; font-size: 0.9rem; font-weight: 500; }
-    input, select, textarea { width: 100%; padding: 8px; margin-top: 5px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
-    dialog { border: none; border-radius: 12px; padding: 20px; width: 100%; max-width: 600px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); }
-    dialog::backdrop { background: rgba(0,0,0,0.5); }
-  </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-  <!-- 1. HEADER / NAVBAR -->
-  <header>
-    <div class="logo">
-      <h1 style="margin: 0; font-size: 1.5rem; color: #007bff;">IIPS Marketplace</h1>
-    </div>
-    <nav>
-      <button id="openFormBtn">+ Create New Listing</button>
-      <button id="viewManagerBtn">Manager Dashboard (<span id="pendingCount">0</span>)</button>
-    </nav> 
+  <!-- ============ HEADER ============ -->
+  <header class="topbar" id="topbar">
+    <a class="logo" href="#home">
+      <span class="logo-mark" aria-hidden="true"><img src="logo.png" alt="marketplacelogo"></span>
+      <span>
+        <h1>IIPS Marketplace</h1>
+        <p>For students, by students</p>
+      </span>
+    </a>
+
+    <nav class="menu" aria-label="Main">
+      <a href="#home" data-spy="home">Home</a>
+      <a href="#listings" data-spy="listings">Listings</a>
+      <a href="#about-us" data-spy="about-us">About Us</a>
+    </nav>
+
+    <nav class="actions" aria-label="Actions">
+      <button id="openFormBtn" class="btn-primary">+ Create New Listing</button>
+      <button id="viewManagerBtn" class="btn-ghost">Manager Dashboard <span class="badge" id="pendingCount">0</span></button>
+    </nav>
   </header>
 
-  <!-- 2. MAIN CONTENT SECTIONS -->
   <main>
-    <!-- Live Marketplace Feed -->
-   <!-- Live Marketplace Feed -->
-    <section id="marketplaceSection">
-      <h2>Live Campus Listings</h2>
-      
-      <!-- Search Bar Input -->
-      <div style="margin: 15px 0;">
-        <input type="text" id="searchInput" placeholder="🔍 Search by title, description, or keywords..." style="padding: 10px; font-size: 1rem; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box;">
-      </div>
+    <!-- ============ MARKETPLACE VIEW ============ -->
+    <div id="marketplaceSection">
 
-      <div id="listingsContainer">
-        <!-- Approved listings render here dynamically -->
-      </div>
-    </section>
+      <!-- Hero -->
+      <section id="home" class="hero">
+        <div class="blob b1"></div><div class="blob b2"></div>
+        <div class="hero-inner">
+          <h2 data-split>Buy it from a classmate. Sell it before the semester ends.</h2>
+          <p class="hero-sub">Calculators, books, cycles, hostel gear. Post in a minute, meet on campus.</p>
+          <div class="hero-cta">
+            <a href="#listings" class="btn-primary">Browse listings</a>
+            <button type="button" class="btn-ghost" id="heroSellBtn">Sell something</button>
+          </div>
+          <dl class="stats">
+            <div><dt>Live listings</dt><dd id="statLive" data-v="0">0</dd></div>
+            <div><dt>Student sellers</dt><dd id="statSellers" data-v="0">0</dd></div>
+            <div><dt>Average price (₹)</dt><dd id="statAvg" data-v="0">0</dd></div>
+          </dl>
+        </div>
+      </section>
 
-    <!-- Manager Review Dashboard -->
-    <section id="managerSection" hidden>
+      <!-- Listings -->
+      <section id="listings" class="section">
+        <h2>Live Campus Listings</h2>
+        <div class="toolbar">
+          <div class="search-wrap">
+            <input type="search" id="searchInput" placeholder="Search by title, description or seller" aria-label="Search listings">
+          </div>
+          <select id="conditionFilter" aria-label="Filter by condition">
+            <option value="">All conditions</option>
+            <option>Like New (Barely Used)</option>
+            <option>Good (Slight Wear)</option>
+            <option>Fair (Well Used)</option>
+          </select>
+          <select id="sortSelect" aria-label="Sort listings">
+            <option value="new">Newest first</option>
+            <option value="low">Price: low to high</option>
+            <option value="high">Price: high to low</option>
+          </select>
+        </div>
+        <p class="muted result-count" id="resultCount" aria-live="polite"></p>
+        <div id="listingsContainer" class="grid"></div>
+      </section>
+
+      <!-- About -->
+      <section id="about-us" class="section about">
+        <h2>About Us</h2>
+        <p class="muted lead">IIPS Marketplace is a student-run space to pass useful things to the next person on campus. Every listing is checked by a manager before it goes live.</p>
+        <ol class="steps">
+          <li class="reveal"><span class="step-n">1</span><h3>Post</h3><p>Add photos, price and condition. Pick a 4-digit PIN so you can remove the item later.</p></li>
+          <li class="reveal"><span class="step-n">2</span><h3>Get approved</h3><p>A manager reviews your listing, then it appears in the live feed.</p></li>
+          <li class="reveal"><span class="step-n">3</span><h3>Meet and sell</h3><p>Buyers call or message you on WhatsApp. Agree on a spot on campus.</p></li>
+        </ol>
+      </section>
+    </div>
+
+    <!-- ============ MANAGER VIEW ============ -->
+    <section id="managerSection" class="section" hidden>
       <h2>Manager Approval Queue</h2>
-      <p style="color: #666;">Review submitted listings before they appear on the live campus feed.</p>
-      <div id="pendingListingsContainer">
-        <!-- Pending listings render here dynamically -->
-      </div>
+      <p class="muted">Review submitted listings before they appear on the live campus feed.</p>
+      <div id="pendingListingsContainer"></div>
+
+      <h2 class="mt">Live Listings</h2>
+      <p class="muted">Approved listings. Delete spam or sold items from here.</p>
+      <div id="liveManagerContainer"></div>
     </section>
   </main>
 
-  <!-- 3. MODAL FORM FOR CREATING LISTING -->
+  <footer class="footer">
+  <p>IIPS Marketplace · Made for campus, by students</p>
+  <p class="footer-credit">Designed &amp; Developed by Ali Mohsin Abidi &amp; Anshu Sharma</p>
+  <p class="footer-copyright">&copy; 2026 IIPS Marketplace. All rights reserved.</p>
+</footer>
+  <!-- ============ NEW LISTING FORM ============ -->
   <dialog id="listingModal">
-    <div>
-      <header style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #ddd; padding-bottom: 8px; margin-bottom: 15px;">
-        <h3 style="margin: 0;">Create New Listing</h3>
-        <button type="button" id="closeModalBtn" style="background: none; border: none; font-size: 1.5rem; cursor: pointer; color: #666;">&times;</button>
-      </header>
-
-      <form id="listingForm">
-        <!-- Seller Info Section -->
-        <fieldset>
-          <legend>Seller Information</legend>
-          
-          <label for="sellerName">Full Name:</label>
-          <input type="text" id="sellerName" name="sellerName" placeholder="e.g., Rohan Kumar" required>
-
-          <label for="sellerphotos">Seller Face Image:</label>
-          <input type="file" id="sellerphotos" name="sellerphotos" accept="image/*" required>
-
-          <label for="phone">Phone Number (Calls):</label>
-          <input type="tel" id="phone" name="phone" placeholder="+91 9876543210" required>
-
-          <label for="whatsapp">WhatsApp Number:</label>
-          <input type="tel" id="whatsapp" name="whatsapp" placeholder="+91 9876543210" required>
-        </fieldset>
-
-        <!-- Product Details Section -->
-        <fieldset>
-          <legend>Product Details</legend>
-
-          <label for="title">Product Title:</label>
-          <input type="text" id="title" name="title" placeholder="e.g., Casio Scientific Calculator / Textbooks" required>
-
-          <label for="price">Price (₹):</label>
-          <input type="number" id="price" name="price" placeholder="500" min="0" required>
-
-          <label for="productPhotos">Product Images (Select multiple):</label>
-          <input type="file" id="productPhotos" name="productPhotos" accept="image/*" multiple required>
-
-          <label for="usage">Usage / Condition:</label>
-          <select id="usage" name="usage" required>
-            <option value="">Select Condition</option>
-            <option value="Like New (Barely Used)">Like New (Barely Used)</option>
-            <option value="Good (Slight Wear)">Good (Slight Wear)</option>
-            <option value="Fair (Well Used)">Fair (Well Used)</option>
-          </select>
-
-          <label for="warranty">Warranty Details:</label>
-          <input type="text" id="warranty" name="warranty" placeholder="e.g., 6 months left / No warranty" required>
-
-          <label for="description">Product Description:</label>
-          <textarea id="description" name="description" rows="3" placeholder="Mention features, pickup spot in campus, etc." required></textarea>
-        </fieldset>
-
-        <footer style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 15px;">
-          <button type="button" id="cancelFormBtn" style="background: #6c757d; color: white; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer;">Cancel</button>
-          <button type="submit" style="background: #28a745; color: white; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-weight: bold;">Submit for Approval</button>
-        </footer>
-      </form>
+    <div class="modal-head">
+      <h3>Create New Listing</h3>
+      <button type="button" id="closeModalBtn" class="x-btn" aria-label="Close">&times;</button>
     </div>
-  </dialog>
 
-  <!-- 4. DETAILED AD VIEW MODAL -->
-  <dialog id="adDetailModal" style="max-width: 650px;">
-    <div>
-      <header style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #ddd; padding-bottom: 10px; margin-bottom: 15px;">
-        <h3 id="detailTitle" style="margin: 0; font-size: 1.3rem;">Product Details</h3>
-        <button type="button" onclick="document.getElementById('adDetailModal').close()" style="background: none; border: none; font-size: 1.5rem; cursor: pointer; color: #666;">&times;</button>
-      </header>
+    <form id="listingForm">
+      <fieldset>
+        <legend>Seller Information</legend>
+        <label for="sellerName">Full Name</label>
+        <input type="text" id="sellerName" placeholder="e.g., Rohan Kumar" required>
 
-      <!-- Image Gallery Section -->
-      <div style="margin-bottom: 15px;">
-        <div style="text-align: center; background: #000; border-radius: 8px; overflow: hidden; height: 250px; display: flex; align-items: center; justify-content: center;">
-          <img id="detailMainImage" src="" alt="Main Preview" style="max-width: 100%; max-height: 250px; object-fit: contain;">
-        </div>
-        <!-- Thumbnails row -->
-        <div id="detailThumbnailsContainer" style="display: flex; gap: 8px; margin-top: 10px; overflow-x: auto; padding-bottom: 5px;"></div>
-      </div>
+        <label for="sellerphotos">Seller Face Image</label>
+        <input type="file" id="sellerphotos" accept="image/*" required>
 
-      <!-- Product Info Grid -->
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px; background: #f8f9fa; padding: 12px; border-radius: 8px;">
-        <div><strong>Price:</strong> <span id="detailPrice" style="color: #28a745; font-size: 1.1rem; font-weight: bold;"></span></div>
-        <div><strong>Condition:</strong> <span id="detailUsage"></span></div>
-        <div><strong>Warranty:</strong> <span id="detailWarranty"></span></div>
-      </div>
-
-      <div style="margin-bottom: 15px;">
-        <strong>Description:</strong>
-        <p id="detailDescription" style="color: #444; margin: 5px 0 0 0; line-height: 1.4;"></p>
-      </div>
-
-      <div style="border-top: 1px solid #ddd; padding-top: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
-        <div style="display: flex; align-items: center; gap: 8px;">
-          <img id="detailSellerPhoto" src="" alt="Seller" style="width: 35px; height: 35px; border-radius: 50%; object-fit: cover;">
+        <div class="two">
           <div>
-            <span style="font-size: 0.85rem; color: #666; display: block;">Posted by</span>
-            <strong id="detailSellerName" style="font-size: 0.95rem;"></strong>
+            <label for="phone">Phone Number (Calls)</label>
+            <input type="tel" id="phone" placeholder="+91 9876543210" pattern="[0-9+\s\-]{10,15}" required>
+          </div>
+          <div>
+            <label for="whatsapp">WhatsApp Number</label>
+            <input type="tel" id="whatsapp" placeholder="+91 9876543210" pattern="[0-9+\s\-]{10,15}" required>
           </div>
         </div>
-        <div style="display: flex; gap: 8px;">
-          <a id="detailCallBtn" href="#" style="background: #007bff; color: white; padding: 8px 14px; text-decoration: none; border-radius: 4px; font-size: 0.9rem;">📞 Call</a>
-          <a id="detailWhatsappBtn" href="#" target="_blank" style="background: #25D366; color: white; padding: 8px 14px; text-decoration: none; border-radius: 4px; font-size: 0.9rem;">💬 WhatsApp</a>
+
+        <label for="deletePin">Delete PIN (4 digits, remember it)</label>
+        <input type="password" id="deletePin" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" placeholder="e.g., 4821" required>
+        <small class="muted">You will need this PIN to remove the item once it is sold.</small>
+      </fieldset>
+
+      <fieldset>
+        <legend>Product Details</legend>
+        <label for="title">Product Title</label>
+        <input type="text" id="title" placeholder="e.g., Casio Scientific Calculator" required>
+
+        <div class="two">
+          <div>
+            <label for="price">Price (₹)</label>
+            <input type="number" id="price" placeholder="500" min="0" required>
+          </div>
+          <div>
+            <label for="usage">Usage / Condition</label>
+            <select id="usage" required>
+              <option value="">Select condition</option>
+              <option value="Like New (Barely Used)">Like New (Barely Used)</option>
+              <option value="Good (Slight Wear)">Good (Slight Wear)</option>
+              <option value="Fair (Well Used)">Fair (Well Used)</option>
+            </select>
+          </div>
         </div>
+
+        <label for="productPhotos">Product Images (up to 5)</label>
+        <input type="file" id="productPhotos" accept="image/*" multiple>
+        <div id="imagePreviewContainer" class="preview"></div>
+
+        <label for="warranty">Warranty Details</label>
+        <input type="text" id="warranty" placeholder="e.g., 6 months left / No warranty" required>
+
+        <label for="description">Product Description</label>
+        <textarea id="description" rows="3" placeholder="Features, pickup spot on campus, etc." required></textarea>
+      </fieldset>
+
+      <div class="modal-foot">
+        <button type="button" id="cancelFormBtn" class="btn-cancel">Cancel</button>
+        <button type="submit" id="submitBtn" class="btn-submit">Submit for Approval</button>
       </div>
+    </form>
+  </dialog>
+
+  <!-- ============ AD DETAIL ============ -->
+  <dialog id="adDetailModal">
+    <div class="modal-head">
+      <h3 id="detailTitle">Product Details</h3>
+      <button type="button" id="closeDetailBtn" class="x-btn" aria-label="Close">&times;</button>
+    </div>
+
+    <div class="main-img-wrap"><img id="detailMainImage" src="" alt="Product"></div>
+    <div id="detailThumbnailsContainer" class="thumbs"></div>
+
+    <div class="info-grid">
+      <div><strong>Price</strong><br><span id="detailPrice" class="price"></span></div>
+      <div><strong>Condition</strong><br><span id="detailUsage"></span></div>
+      <div><strong>Warranty</strong><br><span id="detailWarranty"></span></div>
+    </div>
+
+    <div>
+      <strong>Description</strong>
+      <p id="detailDescription" class="muted"></p>
+    </div>
+
+    <div class="detail-foot">
+      <div class="seller">
+        <img id="detailSellerPhoto" src="" alt="Seller">
+        <div><span class="muted">Posted by</span><br><strong id="detailSellerName"></strong> <span class="muted" id="detailTime"></span></div>
+      </div>
+      <div class="contact">
+        <a id="detailCallBtn" class="call" href="#">📞 Call</a>
+        <a id="detailWhatsappBtn" class="wa" href="#" target="_blank" rel="noopener">💬 WhatsApp</a>
+      </div>
+    </div>
+
+    <div class="owner-row">
+      <button type="button" id="removeListingBtn" class="btn-link">Item sold? Remove this listing</button>
     </div>
   </dialog>
 
-  <!-- Main Script File Linking -->
+  <!-- ============ PIN / CONFIRM DIALOG ============ -->
+  <dialog id="askModal" class="small">
+    <form id="askForm">
+      <h3 id="askTitle"></h3>
+      <p class="muted" id="askText"></p>
+      <input id="askInput" type="password" autocomplete="off">
+      <div class="modal-foot">
+        <button type="button" id="askCancel" class="btn-cancel">Cancel</button>
+        <button type="submit" id="askOk" class="btn-submit">Confirm</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Toasts -->
+  <div id="toastContainer" aria-live="polite"></div>
+
   <script src="Marketplace_Project.js"></script>
 </body>
 </html>
